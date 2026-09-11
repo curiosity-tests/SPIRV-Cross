@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: CI
+run-name: "CI ${{ inputs.leg || github.event_name }} ${{ inputs.racecar_run }}"
 
 on:
   push:
@@ -9,12 +10,30 @@ on:
   pull_request:
     types: [ opened, synchronize, reopened ]
 
+  workflow_dispatch:
+    inputs:
+      leg:
+        description: "baseline (uninstrumented) or instrumented (under chalk/curiosity)"
+        type: choice
+        options: [instrumented, baseline]
+        default: baseline
+      profile:
+        description: "CrashOverride chalk profile"
+        type: string
+        default: curiosity-tests-racecar
+      racecar_run:
+        description: "racecar correlation token, echoed into the run name"
+        type: string
+        default: ""
+
+env:
+  CHALK_ON: ${{ inputs.leg == 'instrumented' }}
 jobs:
   build:
     name: "Build ${{ matrix.platform }}"
     strategy:
       matrix:
-        platform: [windows-latest, ubuntu-24.04, ubuntu-22.04, macos-15]
+        platform: [ubuntu-24.04, ubuntu-22.04]
     env:
       PARALLEL: -j 2
 
@@ -69,6 +88,7 @@ jobs:
         run: ctest --verbose -C Release
 
   build-mobile:
+    if: false   # racecar: non-Linux runner, not measured here
     # iOS is 10x expensive to run on GitHub machines, so only run if we know something else passed as well
     needs: build
     name: "Build ${{ matrix.sdk }}"
@@ -137,6 +157,7 @@ jobs:
           path: build/output
 
   reuse:
+    if: false   # racecar: scan/report job, not a build
     name: "REUSE license check"
     runs-on: ubuntu-latest
     container: khronosgroup/docker-images:asciidoctor-spec
@@ -148,5 +169,4 @@ jobs:
       - name: license-check
         run: |
           reuse lint
-
 
