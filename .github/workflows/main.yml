@@ -6,9 +6,9 @@ run-name: "CI ${{ inputs.leg || github.event_name }} ${{ inputs.racecar_run }}"
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    types: [ opened, synchronize, reopened ]
+    types: [opened, synchronize, reopened]
 
   workflow_dispatch:
     inputs:
@@ -42,139 +42,134 @@ jobs:
 
     runs-on: "${{ matrix.platform }}"
     steps:
-      - uses: crashappsec/action-checkout@main
-        with:
-          chalk: ${{ env.CHALK_ON }}
-          profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
-          lfs: false
-      - name: Assert instrumentation is live
-        continue-on-error: true
-        if: env.CHALK_ON == 'true'
-        run: |
-          test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        lfs: false
+    - uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
 
-      - name: Cache glslang / SPIRV-Tools
-        id: cache-externals
-        uses: actions/cache@v3
-        with:
-          path: external/*-build/output
-          key: ${{ matrix.platform }} externals ${{ hashFiles('checkout_glslang_spirv_tools.sh', 'build_glslang_spirv_tools.sh') }}
+    - name: Cache glslang / SPIRV-Tools
+      id: cache-externals
+      uses: actions/cache@v3
+      with:
+        path: external/*-build/output
+        key: ${{ matrix.platform }} externals ${{ hashFiles('checkout_glslang_spirv_tools.sh', 'build_glslang_spirv_tools.sh') }}
 
-      - name: Pull glslang / SPIRV-Tools
-        if: steps.cache-externals.outputs.cache-hit != 'true'
-        shell: bash
-        working-directory: ${{github.workspace}}
-        run: ./checkout_glslang_spirv_tools.sh
+    - name: Pull glslang / SPIRV-Tools
+      if: steps.cache-externals.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{github.workspace}}
+      run: ./checkout_glslang_spirv_tools.sh
 
-      - name: Build glslang / SPIRV-Tools
-        if: steps.cache-externals.outputs.cache-hit != 'true'
-        shell: bash
-        working-directory: ${{github.workspace}}
-        run: ./build_glslang_spirv_tools.sh Release 4
+    - name: Build glslang / SPIRV-Tools
+      if: steps.cache-externals.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{github.workspace}}
+      run: ./build_glslang_spirv_tools.sh Release 4
 
-      - name: Configure SPIRV-Cross
-        shell: bash
-        run: |
-          mkdir build
-          cd build
-          cmake .. -DSPIRV_CROSS_WERROR=ON -DSPIRV_CROSS_MISC_WARNINGS=ON -DSPIRV_CROSS_SHARED=ON -DCMAKE_INSTALL_PREFIX=output -DCMAKE_BUILD_TYPE=Release -DSPIRV_CROSS_ENABLE_TESTS=ON -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15
+    - name: Configure SPIRV-Cross
+      shell: bash
+      run: |
+        mkdir build
+        cd build
+        cmake .. -DSPIRV_CROSS_WERROR=ON -DSPIRV_CROSS_MISC_WARNINGS=ON -DSPIRV_CROSS_SHARED=ON -DCMAKE_INSTALL_PREFIX=output -DCMAKE_BUILD_TYPE=Release -DSPIRV_CROSS_ENABLE_TESTS=ON -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15
 
-      - name: Build SPIRV-Cross
-        shell: bash
-        working-directory: ${{github.workspace}}/build
-        run: |
-          cmake --build . --config Release --parallel 4
-          cmake --build . --config Release --target install
+    - name: Build SPIRV-Cross
+      shell: bash
+      working-directory: ${{github.workspace}}/build
+      run: |
+        cmake --build . --config Release --parallel 4
+        cmake --build . --config Release --target install
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.platform }}-binaries
-          path: build/output
-      - name: Test SPIRV-Cross
-        shell: bash
-        working-directory: ${{github.workspace}}/build
-        run: ctest --verbose -C Release
+    - uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.platform }}-binaries
+        path: build/output
+    - name: Test SPIRV-Cross
+      shell: bash
+      working-directory: ${{github.workspace}}/build
+      run: ctest --verbose -C Release
 
-  build-mobile:
-    if: false   # racecar: non-Linux runner, not measured here
-    # iOS is 10x expensive to run on GitHub machines, so only run if we know something else passed as well
-    needs: build
-    name: "Build ${{ matrix.sdk }}"
-    strategy:
-      matrix:
-        include:
-          - platform: iOS
-            sdk: iphoneos
-            architectures: arm64
-          - platform: iOS
-            sdk: iphonesimulator
-            architectures: x86_64;arm64
-          - platform: tvOS
-            sdk: appletvos
-            architectures: arm64
-          - platform: tvOS
-            sdk: appletvsimulator
-            architectures: x86_64;arm64
-    env:
-      PARALLEL: -j 2
+    - name: Check observables and crashes
+      if: always() && env.CHALK_ON == 'true'
+      shell: bash
+      run: |
+        set -uo pipefail
+        root="${CURIOSITY_ROOT:-}"
+        home="${CURIOSITY_HOME:-/mnt/curiosity}"
+        obs="${home}/observables"
+        fail=0
 
-    runs-on: "macos-15"
-    steps:
-      - uses: crashappsec/action-checkout@main
-        with:
-          chalk: ${{ env.CHALK_ON }}
-          profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
-          lfs: false
-      - name: Assert instrumentation is live
-        continue-on-error: true
-        if: env.CHALK_ON == 'true'
-        run: |
-          test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
+        echo "::group::curiosity layout"
+        echo "CURIOSITY_ROOT=${root:-<unset>}"
+        echo "CURIOSITY_HOME=${home}"
+        ls -la "${obs}" 2>/dev/null || echo "no observables dir at ${obs}"
+        echo "::endgroup::"
 
-      - name: Cache glslang / SPIRV-Tools
-        id: cache-externals
-        uses: actions/cache@v3
-        with:
-          path: external/*-build/output
-          key: ${{ matrix.platform }} externals ${{ hashFiles('checkout_glslang_spirv_tools.sh', 'build_glslang_spirv_tools.sh') }}
+        # Observables for THIS run+attempt. The prefix matters: a stale file from an
+        # earlier run on the same mount would otherwise pass.
+        prefix="${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+        shopt -s nullglob
+        mine=("${obs}/${prefix}"*)
+        if [ ${#mine[@]} -eq 0 ]; then
+          mine=("${obs}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-observables"*)
+        fi
+        if [ ${#mine[@]} -eq 0 ]; then
+          echo "::error::no observables for run ${prefix} in ${obs} - instrumentation produced nothing"
+          fail=1
+        else
+          echo "observables present: ${#mine[@]} file(s)"
+          printf '  %s\n' "${mine[@]}"
+        fi
 
-      - name: Pull glslang / SPIRV-Tools
-        if: steps.cache-externals.outputs.cache-hit != 'true'
-        shell: bash
-        working-directory: ${{github.workspace}}
-        run: ./checkout_glslang_spirv_tools.sh
+        for f in "${mine[@]}"; do
+          case "$f" in
+            *.jsonl|*.json|*.combined)
+              if ! jq --slurp "." "$f" > /dev/null 2>&1; then
+                echo "::error::observables do not parse: $f"
+                fail=1
+              fi
+              ;;
+          esac
+        done
 
-      - name: Build glslang / SPIRV-Tools
-        if: steps.cache-externals.outputs.cache-hit != 'true'
-        shell: bash
-        working-directory: ${{github.workspace}}
-        run: ./build_glslang_spirv_tools.sh Release 4
+        # Crash thresholds copied from check-run: a few null frames are noise, more than
+        # five is a stack walk into nothing.
+        for f in "${root}"/log/co-host*.log "${home}"/log/co-host*.log; do
+          [ -f "$f" ] || continue
+          echo "Asserting that there is no crash in $f"
+          if [ "$(grep -c 'p 00000000' "$f" 2>/dev/null || echo 0)" -gt 5 ] \
+            || [ "$(grep -E -c 'FATAL: Uncaught signal|Address not mapped at|RAX 0x.*RBX 0x' "$f" 2>/dev/null || echo 0)" -gt 1 ]; then
+            echo "::error::crash signature in $f"
+            grep -E 'FATAL: Uncaught signal|Address not mapped at' "$f" | head -5 || true
+            fail=1
+          fi
+        done
 
-      - name: Configure SPIRV-Cross
-        shell: bash
-        run: |
-          mkdir build
-          cd build
-          cmake .. -DSPIRV_CROSS_WERROR=ON -DSPIRV_CROSS_MISC_WARNINGS=ON -DSPIRV_CROSS_SHARED=ON -DCMAKE_INSTALL_PREFIX=output -DCMAKE_BUILD_TYPE=Release -DSPIRV_CROSS_ENABLE_TESTS=ON -DCMAKE_SYSTEM_NAME=${{ matrix.platform }} -DCMAKE_OSX_ARCHITECTURES="${{ matrix.architectures }}" -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 -DCMAKE_OSX_SYSROOT=`xcodebuild -version -sdk ${{ matrix.sdk }} Path` -DBUILD_SHARED_LIBS=OFF
+        cores=("${root}"/coredump.* "${home}"/coredump.*)
+        if [ ${#cores[@]} -gt 0 ]; then
+          echo "::error::coredump present: ${cores[*]}"
+          fail=1
+        fi
 
-      - name: Build SPIRV-Cross
-        shell: bash
-        working-directory: ${{github.workspace}}/build
-        run: |
-          cmake --build . --config Release --parallel 4
-          cmake --build . --config Release --target install
+        for f in "${root}"/runc.log "${root}"/runc.global.log \
+                 "${home}"/runc.log "${home}"/runc.global.log; do
+          [ -f "$f" ] || continue
+          if grep -q '^E:' "$f"; then
+            echo "::error::error in $f"
+            grep '^E:' "$f" | head -5
+            fail=1
+          fi
+        done
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.sdk }}-binaries
-          path: build/output
-
+        if [ "$fail" -ne 0 ]; then
+          echo "::error::instrumentation check FAILED"
+          exit 1
+        fi
+        echo "instrumentation check passed"
   reuse:
     if: false   # racecar: scan/report job, not a build
     name: "REUSE license check"
@@ -182,17 +177,89 @@ jobs:
     container: khronosgroup/docker-images:asciidoctor-spec
 
     steps:
-      - uses: crashappsec/action-checkout@main
-        with:
-          chalk: ${{ env.CHALK_ON }}
-          profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
-          lfs: false
-      - name: Assert instrumentation is live
-        continue-on-error: true
-        if: env.CHALK_ON == 'true'
-        run: |
-          test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
-      - name: license-check
-        run: |
-          reuse lint
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        lfs: false
+    - name: license-check
+      run: |
+        reuse lint
 
+    - name: Check observables and crashes
+      if: always() && env.CHALK_ON == 'true'
+      shell: bash
+      run: |
+        set -uo pipefail
+        root="${CURIOSITY_ROOT:-}"
+        home="${CURIOSITY_HOME:-/mnt/curiosity}"
+        obs="${home}/observables"
+        fail=0
+
+        echo "::group::curiosity layout"
+        echo "CURIOSITY_ROOT=${root:-<unset>}"
+        echo "CURIOSITY_HOME=${home}"
+        ls -la "${obs}" 2>/dev/null || echo "no observables dir at ${obs}"
+        echo "::endgroup::"
+
+        # Observables for THIS run+attempt. The prefix matters: a stale file from an
+        # earlier run on the same mount would otherwise pass.
+        prefix="${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+        shopt -s nullglob
+        mine=("${obs}/${prefix}"*)
+        if [ ${#mine[@]} -eq 0 ]; then
+          mine=("${obs}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-observables"*)
+        fi
+        if [ ${#mine[@]} -eq 0 ]; then
+          echo "::error::no observables for run ${prefix} in ${obs} - instrumentation produced nothing"
+          fail=1
+        else
+          echo "observables present: ${#mine[@]} file(s)"
+          printf '  %s\n' "${mine[@]}"
+        fi
+
+        for f in "${mine[@]}"; do
+          case "$f" in
+            *.jsonl|*.json|*.combined)
+              if ! jq --slurp "." "$f" > /dev/null 2>&1; then
+                echo "::error::observables do not parse: $f"
+                fail=1
+              fi
+              ;;
+          esac
+        done
+
+        # Crash thresholds copied from check-run: a few null frames are noise, more than
+        # five is a stack walk into nothing.
+        for f in "${root}"/log/co-host*.log "${home}"/log/co-host*.log; do
+          [ -f "$f" ] || continue
+          echo "Asserting that there is no crash in $f"
+          if [ "$(grep -c 'p 00000000' "$f" 2>/dev/null || echo 0)" -gt 5 ] \
+            || [ "$(grep -E -c 'FATAL: Uncaught signal|Address not mapped at|RAX 0x.*RBX 0x' "$f" 2>/dev/null || echo 0)" -gt 1 ]; then
+            echo "::error::crash signature in $f"
+            grep -E 'FATAL: Uncaught signal|Address not mapped at' "$f" | head -5 || true
+            fail=1
+          fi
+        done
+
+        cores=("${root}"/coredump.* "${home}"/coredump.*)
+        if [ ${#cores[@]} -gt 0 ]; then
+          echo "::error::coredump present: ${cores[*]}"
+          fail=1
+        fi
+
+        for f in "${root}"/runc.log "${root}"/runc.global.log \
+                 "${home}"/runc.log "${home}"/runc.global.log; do
+          [ -f "$f" ] || continue
+          if grep -q '^E:' "$f"; then
+            echo "::error::error in $f"
+            grep '^E:' "$f" | head -5
+            fail=1
+          fi
+        done
+
+        if [ "$fail" -ne 0 ]; then
+          echo "::error::instrumentation check FAILED"
+          exit 1
+        fi
+        echo "instrumentation check passed"
